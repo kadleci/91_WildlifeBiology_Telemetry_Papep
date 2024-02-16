@@ -1,7 +1,19 @@
-## UD
+# required packages
+library(tidyverse)
+library(dplyr)
+library(gganimate)
+library(ctmm)
+library(ggplot2)
+library(prismatic)
+library(lubridate)
+library(raster)
+library(sf)
+library(rgdal)
+
+# UD
 load("UDS_month_wolves.RData") # load of monthly UDs
 
-hrs_8 <- lapply(UDS_8, function(d) as.sf(d, level.UD = 0.95)) # selection of the wolf
+hrs_8 <- lapply(UDS_mth[["30776"]], function(d) as.sf(d, level.UD = 0.95)) # selection of the wolf
 
 names(hrs_8) <- paste("period",1:length(hrs_8))
 
@@ -64,4 +76,4 @@ akde <- ggplot(hrs_8_krov) +
   theme(plot.title = element_text(size = 30, face = "bold")) 
 
 gganimate::animate(akde, height = 800, width =800) # creating an animation with the required width and height
-anim_save("47016_AKDE.gif") # export animation in GIF format
+anim_save("47016_AKDE.gif") # Export animation in GIF format
