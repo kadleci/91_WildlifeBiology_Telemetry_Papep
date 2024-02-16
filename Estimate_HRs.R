@@ -1,88 +1,123 @@
 # required packages
-require(ctmm)
-require(adehabitatHR)
 require(tidyverse)
+require(lubridate)
+require(ctmm)
+library(progress)
+require(adehabitatHR)
+library(eatTools)
 
 
-load("wolves_data.Rdata") # loading edited data
+load("wolves_data_new.Rdata") # Load data
+df_new <- df_new %>% filter(type == "resident") # Filtering only resident individuals
+unique(df_new$ID)
+
+# define progress bar
+pb <- txtProgressBar(min = 0,      # Minimum value of the progress bar
+                     max = length(unique(df_new$ID)), # Maximum value of the progress bar
+                     style = 3,    # Progress bar style 
+                     width = 50,   # Progress bar width
+                     char = "=") 
+
+# AKDE --------------------------------------------------------------------
+# data conversion to "telemetry" object
+tel <- lapply(1:length(unique(df_new$ID)), function(b) as.telemetry(df_new %>% 
+                                              filter(ID==levels(as.factor(df_new$ID))[b]
+                                                     & type == "resident"),
+                                            timeformat =  "%Y-%m-%d %H:%M:%S", # Defining the time format
+                                            timezone = "UTC")) # Time zone setting
+names(tel) <- levels(as.factor(df_new$ID)) 
+
+# variogram and its display
+wolves_vg <- lapply(tel, function (b)  variogram(b))
+
+for (i in 1:length(unique(df_new$ID))) {
+  ctmm::plot(wolves_vg[[i]], col.CTMM = "red")
+  title(main = levels(as.factor(df_new$ID))[i])
+}
+
+for (i in 1:length(unique(df_new$ID))) {
+  ctmm::plot(wolves_vg[[i]], fraction=0.010, col.CTMM = "red")
+  title(main = levels(as.factor(df_new$ID))[i])
+}
+
+# Outalier analysis; deviated trajectory or suspiciously high speed is marked in red
+OUT <- lapply(tel, function (t) outlie(t))
+BAD <- lapply(OUT, function (o) which.max(o$speed))
+
+for (i in 1:length(names(tel))) {
+  tel[[i]] <- tel[[i]][-BAD[[i]],]
+  
+}
+lapply(1:length(unique(df_new$ID)), function (b) outlie(tel[b], plot = T, main =  levels(as.factor(df_new$ID))[b]))
 
 
-# 1) Analysis of home precincts using the MCP method -------------------------
-ID <- c("36927", "36928", "36930", "36931", "36932", "29456_CZE", "47015", "47016", "30776",    
-        "30777", "30778", "30779", "46090", "46088", "29456_AUT")
+# fitting model
+GUESS <- lapply(tel, function (t) {
+  ctmm.guess(t, interactive = FALSE)
+  })
 
-xysp <- lapply(data, function(b) SpatialPoints(b[,2:3]))
-names(xysp) <- ID
+FITS <- lapply(1:length(unique(df_new$ID)), function (f) {
+  setTxtProgressBar(pb, f)
+  ctmm.select(tel[[f]], GUESS[[f]])
+  })
+names(FITS) <- names(tel)
+
+lapply(FITS, function(b) summary (b))
+
+UDS <- lapply(1:length(unique(df_new$ID)), function(u) {
+  setTxtProgressBar(pb, u)
+  akde(tel[[u]], FITS[[u]])
+  })
+
+names(UDS) <- names(tel)
+lapply(1:length(unique(df_new$ID)), function(p) plot(tel[[p]], UD = UDS[[p]]),
+       main = names(UDS)[p])
+
+lapply(UDS, function(b) summary(b))
+lapply(UDS, function(b) summary(b, level.UD=0.5))
+
+# KDE ---------------------------------------------------------------------
+IDD <- lapply(tel, function(b) ctmm.fit(b))
+KDE <- lapply(1:length(unique(df_new$ID)), function (i) akde(tel[[i]], IDD[[i]]))
+
+names(KDE) <- names(tel)
+
+lapply(KDE, function(b) summary(b))
+lapply(KDE, function(b) summary(b, level.UD=0.5))
+
+# MCP ---------------------------------------------------------------------
+xysp <- lapply(lapply(1:length(unique(df_new$ID)), function (b) df_new %>% 
+                        filter(ID == levels(as.factor(df_new$ID))[b]))
+               , function(c) SpatialPoints(c[,2:3]))
+names(xysp) <- names(tel)
+
 hr.mcp <- lapply(xysp, function (b) mcp(b, percent = 95, unout = "km2"))
 core_hr.mcp <- lapply(xysp, function (b) mcp(b, percent = 50, unout = "km2"))
 
 
-# 2) Analysis of HRs using AKDE and KDE method --------------------
-# 36932 
-wolf_36932 <- data[[5]] # selection of the wolf
-
-# data conversion to "telemetry" object
-tel_36932 <- as.telemetry(wolf_36932, timeformat = "%Y-%m-%d %H:%M:%S", timezone = "UTC") 
-
-# data conversion to "telemetry" object
-wolf_36932.vg <- variogram(tel_36932) # variogram and its display
-plot(wolf_36932.vg, col.CTMM = "red")
-plot(wolf_36932.vg, fraction=0.010, col.CTMM = "red")
-
-OUT_36932 <- outlie(tel_36932, plot = T) 
-plot(OUT_36932)
-# Outalier analysis; deviated trajectory or suspiciously high speed is marked in red.
-
-# fitting model
-GUESS_36932 <- ctmm.guess(tel_36932, interactive = FALSE) 
-FITS_36932 <- ctmm.select(tel_36932, GUESS_36932) 
-# the function selects the most appropriate home range estimation method using the delta AIC criterion
-summary(FITS_36932) #OUF anisotropic
-
-# HR estimation using AKDE method
-UDS_36932 <- akde(tel_36932, FITS_36932) # UD estimate
-plot(tel_36932, UD = UDS_36932) # display results (including 95% HR)
-summary(UDS_36932)
-summary(UDS_36932, level.UD = 0.5) # the core of the home area
-
-# HR estimation using KDE method
-IDD_36932 <- ctmm.fit(tel_36932)
-KDE_36932 <- akde(tel_36932, IDD_36932)
-summary(KDE_36932)
-summary(KDE_36932, level.UD = 0.5)
-
-
-# 3) Analysis of spatiotemporal dynamics of monthly home ranges --------------
-## 36932
-tel_5_22 <- vector("list", 12)
-tel_5_23 <- vector("list", 12)
-
-for (i in 5:12){
-  tel_5_22[[i]] <- as.telemetry(wolf_36932 %>%
-                                  filter(month == i), timeformat = "%Y.%m.%d %H:%M:%S", timezone = "UTC")
-}
-
-for (i in 1:6) {
-  tel_5_23[[i]] <- as.telemetry(wolf_36932 %>%
-                                  filter(month == i), timeformat = "%Y.%m.%d %H:%M:%S", timezone = "UTC")
-}
-
-tel_5 <- c(tel_5_22, tel_5_23)
-
-
-# preparation of telemetry object
-names(tel_5) <- c("Jan_22", "Feb_22", "Mar_22", "Apr_22", "May_22", "Jun_22", "Jul_22",
-                  "Aug_22", "Sep_22","Oct_22", "Nov_22", "Dec_22",
-                  "Jan_23", "Feb_23", "Mar_23", "Apr_23", "May_23", "Jun_23", "Jul_23",
-                  "Aug_23", "Sep_23","Oct_23", "Nov_23", "Dec_23")
-
-ctmm::projection(tel_5) <- ctmm::median(tel_5) # Apply projection telemetry object (North==up)
-plot(tel_5)
-
-# fit a movement model for each month
-GUESS5 <- lapply(tel_5, function(b) ctmm.guess(b,interactive=FALSE) )
-FITS5 <- lapply(1:14, function(i) ctmm.select(tel_5[[i]],GUESS5[[i]]) )
-names(FITS5) <- names(tel_5)
-
-# AKDE overleap between the months
-UDS_5 <- akde(tel_5,FITS5, level = 0.95)
+# Data_frame of all methods --------------------------------------------------------------
+df_HR <- lapply(1:length(names(UDS)), function (b) summary(UDS[[b]], level.UD = 0.95)$CI %>% 
+  tibble()) %>% do_call_rbind_withName(.,names(UDS), "ID") %>% 
+  add_column(HR = "95% HR",
+             method = "AKDE") %>% 
+  rbind(., lapply(1:length(names(UDS)), function (c) summary(UDS[[c]], level.UD = 0.50)$CI %>% 
+                    tibble()) %>% do_call_rbind_withName(.,names(UDS), "ID") %>% 
+          add_column(HR = "50% HR",
+                     method = "AKDE"),
+        lapply(1:length(names(KDE)), function (d) summary(KDE[[d]], level.UD = 0.95)$CI %>% 
+                 tibble()) %>% do_call_rbind_withName(.,names(KDE), "ID") %>% 
+          add_column(HR = "95% HR",
+                     method ="KDE"),
+        lapply(1:length(names(KDE)), function (e) summary(KDE[[e]], level.UD = 0.50)$CI %>% 
+                 tibble()) %>% do_call_rbind_withName(.,names(KDE), "ID") %>% 
+          add_column(HR = "50% HR",
+                     method = "KDE"),
+        lapply(1:length(names(hr.mcp)), function (f) hr.mcp[[f]]$area %>% 
+                 tibble()) %>% do_call_rbind_withName(., names(hr.mcp), "ID") %>% 
+          add_column(HR = "95% HR",
+                     method = "MCP"),
+        lapply(1:length(names(core_hr.mcp)), function (g) core_hr.mcp[[g]]$area %>% 
+                 tibble()) %>% do_call_rbind_withName(., names(core_hr.mcp), "ID") %>% 
+          add_column(HR = "50% HR",
+                     method = "MCP")
+        ) 
